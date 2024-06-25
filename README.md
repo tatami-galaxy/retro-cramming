@@ -6,3 +6,14 @@
 
 RETRO implementation under the cramming setup
 
+#### Follow through steps
+
+- Dataset
+    - wikipedia dataset
+
+- Init RETRO class (retro_pytorch)
+    - Init encoder, decoder
+- Init TrainingWrapper (training)
+    - text_folder_to_chunks_ (retrieval)
+        - doc_text_to_chunks_and_seq_indices
+            - tokenize

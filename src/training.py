@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from retro_pytorch import RETRO
 from data import RETRODataset, knn_to_retrieved_chunks
 from optimizer import get_optimizer
-from retrieval import text_folder_to_chunks_, chunks_to_precalculated_knn_, bert_embed, SOS_ID, EOS_ID
+from retrieval import text_dataset_to_chunks_, chunks_to_precalculated_knn_, bert_embed, SOS_ID, EOS_ID
 from utils import memmap, is_true_env_flag
 
 from einops import rearrange
@@ -126,9 +126,11 @@ class TrainingWrapper(nn.Module):
         *,
         retro,
         chunk_size,
-        documents_path,
+        #documents_path,
+        dataset,
+        tokenizer_path,
         knn,
-        glob = '**/*.txt',
+        #glob = '**/*.txt',
         chunks_memmap_path = './train.chunks.dat',
         seqs_memmap_path = './train.seq.dat',
         doc_ids_memmap_path = './train.doc_ids.dat',
@@ -154,9 +156,11 @@ class TrainingWrapper(nn.Module):
         # force reprocess by setting REPROCESS=1 when running training script
 
         if not stats_path.exists() or force_reprocess:
-            self.stats = text_folder_to_chunks_(
-                folder = documents_path,
-                glob = glob,
+            self.stats = text_dataset_to_chunks_(
+                #folder = documents_path,
+                dataset = dataset,
+                tokenizer_path = tokenizer_path,
+                #glob = glob,
                 chunks_memmap_path = chunks_memmap_path,
                 seqs_memmap_path = seqs_memmap_path,
                 doc_ids_memmap_path = doc_ids_memmap_path,

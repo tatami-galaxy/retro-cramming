@@ -46,11 +46,13 @@ def faiss_read_index(path):
 MODEL = None
 TOKENIZER = None
 
-def get_tokenizer():
+
+def get_tokenizer(tokenizer_path):
     global TOKENIZER
     if not exists(TOKENIZER):
-        TOKENIZER = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', 'bert-base-cased')
+        TOKENIZER = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', tokenizer_path)
     return TOKENIZER
+
 
 def get_bert():
     global MODEL
@@ -63,11 +65,11 @@ def get_bert():
 
 # tokenize
 
-def tokenize(texts, add_special_tokens = True):
+def tokenize(texts, tokenizer_path, add_special_tokens = True):
     if not isinstance(texts, (list, tuple)):
         texts = [texts]
 
-    tokenizer = get_tokenizer()
+    tokenizer = get_tokenizer(tokenizer_path)
 
     encoding = tokenizer.batch_encode_plus(
         texts,
@@ -84,13 +86,14 @@ def tokenize(texts, add_special_tokens = True):
 def doc_text_to_chunks_and_seq_indices(
     *,
     doc_text,
+    tokenizer_path,
     chunk_size = 64,
     seq_len = 2048,
     pad_id = 0
 ):
     assert (seq_len % chunk_size) == 0, 'sequence length must be divisible by chunk size'
 
-    ids = tokenize(doc_text)
+    ids = tokenize(doc_text, tokenizer_path)
     ids = rearrange(ids, '1 ... -> ...')
 
     text_len = ids.shape[-1]
@@ -124,22 +127,21 @@ def doc_text_to_chunks_and_seq_indices(
     return chunks_with_extra_token, seq
 
 
-def text_folder_to_chunks_(
+def text_dataset_to_chunks_(
     *,
-    folder,
+    #folder,
+    dataset,
+    tokenizer_path,
     chunks_memmap_path,
     seqs_memmap_path,
     doc_ids_memmap_path,
     chunk_size = 64,
     seq_len = 2048,
-    glob = '**/*.txt',
+    #glob = '**/*.txt',
     max_chunks = 1_000_000,
     max_seqs = 100_000
 ):
-    paths = sorted([*Path(folder).glob(glob)])
-
-    print(paths)
-    quit()
+    #paths = sorted([*Path(folder).glob(glob)])
 
     total_chunks = 0
     total_docs = 0
@@ -153,11 +155,11 @@ def text_folder_to_chunks_(
         , memmap(seqs_memmap_path, shape = seqs_shape, dtype = np.int32, mode = 'w+') as seqs_memmap\
         , memmap(doc_ids_memmap_path, shape = doc_ids_shape, dtype = np.int32, mode = 'w+') as doc_ids_memmap:
 
-        for path in paths:
-            print(f'processing {path}')
+        for example in dataset:
 
             chunks, seq = doc_text_to_chunks_and_seq_indices(
-                doc_text = path.read_text(),
+                doc_text = example['text'],
+                tokenizer_path = tokenizer_path,
                 chunk_size = chunk_size,
                 seq_len = seq_len
             )
@@ -173,11 +175,16 @@ def text_folder_to_chunks_(
             total_seqs += doc_seq_len
             total_docs += 1
 
+            print(total_chunks)
+            print(total_seqs)
+            quit()
+
     return dict(
         chunks = total_chunks,
         docs = total_docs,
         seqs = total_seqs
     )
+
 
 # embedding function
 

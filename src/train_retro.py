@@ -42,11 +42,11 @@ def train(common_args, training_args, data_args, accelerator):
     chunks_memmap_path = './train.chunks.dat',     # path to chunks
     seqs_memmap_path = './train.seq.dat',          # path to sequence data
     doc_ids_memmap_path = './train.doc_ids.dat',   # path to document ids per chunk (used for filtering neighbors belonging to same document)
-    max_chunks = 1_000_000,                        # maximum cap to chunks
-    max_seqs = 100_000,                            # maximum seqs
+    max_chunks = data_args.max_chunks,                        # maximum cap to chunks
+    max_seqs = data_args.max_seqs,                            # maximum seqs
     knn_extra_neighbors = 100,                     # num extra neighbors to fetch
-    max_index_memory_usage = '100m',
-    current_memory_available = '1G'
+    max_index_memory_usage = data_args.max_index_memory_usag,
+    current_memory_available = data_args.current_memory_available,
 )
 
 
@@ -67,6 +67,7 @@ def run():
         default='./',
         type=str,
     )
+
     training_parser.add_argument(
         "--encoder_model",
         default='bert-base-uncased', 
@@ -96,6 +97,7 @@ def run():
         default=1e-5,
         type=float,
     )
+
     data_parser.add_argument(
         "--dataset_path",
         default='/media/drdo/DATA/Datasets/wikipedia_20231101_en',
@@ -104,6 +106,26 @@ def run():
     data_parser.add_argument(
         "--tokenizer_path",
         default='bert-base-uncased',
+        type=str,
+    )
+    data_parser.add_argument(
+        "--max_chunks",
+        default=10000000,
+        type=int,
+    )
+    data_parser.add_argument(
+        "--max_seqs",
+        default=1000000,
+        type=int,
+    )
+    data_parser.add_argument(
+        "--max_index_memory_usage",
+        default='100m',
+        type=str,
+    )
+    data_parser.add_argument(
+        "--current_memory_available",
+        default='1G',
         type=str,
     )
 

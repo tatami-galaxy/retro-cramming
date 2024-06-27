@@ -1,5 +1,6 @@
 from pathlib import Path
 from math import ceil
+from tqdm.auto import tqdm
 
 import torch
 import torch.nn.functional as F
@@ -93,35 +94,37 @@ def doc_text_to_chunks_and_seq_indices(
 ):
     assert (seq_len % chunk_size) == 0, 'sequence length must be divisible by chunk size'
 
+    # 1 x total text length
     ids = tokenize(doc_text, tokenizer_path)
+
     ids = rearrange(ids, '1 ... -> ...')
 
     text_len = ids.shape[-1]
 
     # pad to multiple of chunk size with an extra token
-
     padding = chunk_size - ((text_len - 1) % chunk_size)
     ids = F.pad(ids, (0, padding))
 
-    # split out very last token
-
+    # split out very last token (of last chunk)
+    # this is a pad token if n not a multiple of chunk_size
     ids, last_token = ids[:-1], ids[-1:]
+
+    # rearrange all tokens into chunks
     ids = rearrange(ids, '(n c) -> n c', c = chunk_size)
 
     # first tokens of chunk [2:] and on will become the last token of chunk [1:]
-
     last_token_per_chunk = ids[1:, 0]
     all_last_tokens = torch.cat((last_token_per_chunk, last_token), dim = 0)
     all_last_tokens = rearrange(all_last_tokens, 'n -> n 1')
 
-    # append all last tokens to ids for (num_chunks, chunk_size + 1)
-
+    # append all last tokens to ids for (num_chunks, chunk_size + 1) 
+    # chunk size = l+1
     chunks_with_extra_token = torch.cat((ids, all_last_tokens), dim = -1)
 
     # calculate chunk indices starting at 0, spaced number of chunks of seq len apart
-
     total_chunks = ids.shape[0]
     num_chunks_per_seq = seq_len // chunk_size
+    # seq starting points in doc
     seq = torch.arange(0, total_chunks, num_chunks_per_seq)
 
     return chunks_with_extra_token, seq
@@ -155,6 +158,9 @@ def text_dataset_to_chunks_(
         , memmap(seqs_memmap_path, shape = seqs_shape, dtype = np.int32, mode = 'w+') as seqs_memmap\
         , memmap(doc_ids_memmap_path, shape = doc_ids_shape, dtype = np.int32, mode = 'w+') as doc_ids_memmap:
 
+        bar = tqdm(range(len(dataset)))  # max chunk or seq instead of dataset len maybe
+
+        # can we parallelize this?
         for example in dataset:
 
             chunks, seq = doc_text_to_chunks_and_seq_indices(
@@ -164,20 +170,27 @@ def text_dataset_to_chunks_(
                 seq_len = seq_len
             )
 
+            # how many chunks in doc
             doc_chunk_len = chunks.shape[0]
+            # how many seqs in doc
             doc_seq_len = seq.shape[0]
 
-            chunks_memmap[total_chunks:(total_chunks + doc_chunk_len)] = chunks.numpy()
-            seqs_memmap[total_seqs:(total_seqs + doc_seq_len)] = seq.numpy() + total_chunks
-            doc_ids_memmap[total_chunks:(total_chunks + doc_chunk_len)] = np.full((doc_chunk_len,), total_docs)
+            ## how to exit when max chunks reached? ##
+
+            # store chunks, seqs, doc_ids
+            # chunks (token ids)
+            chunks_memmap[total_chunks: (total_chunks + doc_chunk_len)] = chunks.numpy() 
+            # seq starting positions in corpus (all docs)
+            seqs_memmap[total_seqs: (total_seqs + doc_seq_len)] = seq.numpy() + total_chunks
+            # doc id for each chunk
+            doc_ids_memmap[total_chunks: (total_chunks + doc_chunk_len)] = np.full((doc_chunk_len,), total_docs)
 
             total_chunks += doc_chunk_len
             total_seqs += doc_seq_len
             total_docs += 1
 
-            print(total_chunks)
-            print(total_seqs)
-            quit()
+            bar.update(1)
+
 
     return dict(
         chunks = total_chunks,

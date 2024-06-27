@@ -14,6 +14,8 @@ RETRO implementation under the cramming setup
 - Init RETRO class (retro_pytorch)
     - Init encoder, decoder
 - Init TrainingWrapper (training)
-    - text_folder_to_chunks_ (retrieval)
+    - text_dataset_to_chunks_ (retrieval)  -> need to parallelize
         - doc_text_to_chunks_and_seq_indices
             - tokenize
+            - chunk
+        - store chunks, seqs, doc_ids for each chunk

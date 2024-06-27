@@ -175,6 +175,8 @@ class TrainingWrapper(nn.Module):
             print(f'found to be previously processed at {str(stats_path)}')
             self.stats = json.loads(stats_path.read_text())
 
+        quit()
+
         # get number of chunks and number of sequences
 
         num_chunks = self.stats['chunks']

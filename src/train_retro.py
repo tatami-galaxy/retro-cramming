@@ -31,21 +31,28 @@ def train(common_args, training_args, data_args, accelerator):
     dataset_dict = load_from_disk(data_args.dataset_path)
     dataset = dataset_dict['train']
 
+    processed_data_path = common_args.repo_dir+'/data/processed'
+
     wrapper = TrainingWrapper(
-    retro = retro,                                 # path to retro instance
-    knn = 2,                                       # knn (2 in paper was sufficient)
-    chunk_size = 64,                               # chunk size (64 in paper)
-    #documents_path = './text_folder',             # path to folder of text
+    retro = retro,                             
+    knn = training_args.knn,    # 2                       
+    chunk_size = training_args.chunk_size,  # 64         
+    #documents_path = './text_folder',           
     dataset = dataset,
-    tokenizer_path = data_args.tokenizer_path,     # path to tokenizer
-    #glob = '**/*.txt',                            # text glob
-    chunks_memmap_path = './train.chunks.dat',     # path to chunks
-    seqs_memmap_path = './train.seq.dat',          # path to sequence data
-    doc_ids_memmap_path = './train.doc_ids.dat',   # path to document ids per chunk (used for filtering neighbors belonging to same document)
-    max_chunks = data_args.max_chunks,                        # maximum cap to chunks
-    max_seqs = data_args.max_seqs,                            # maximum seqs
-    knn_extra_neighbors = 100,                     # num extra neighbors to fetch
-    max_index_memory_usage = data_args.max_index_memory_usag,
+    tokenizer_path = data_args.tokenizer_path,     
+    #glob = '**/*.txt',                            
+    chunks_memmap_path =  processed_data_path+'/train.chunks.dat',  # path to chunks
+    seqs_memmap_path =  processed_data_path+'/train.seq.dat',   # path to sequence data
+    # path to document ids per chunk (used for filtering neighbors belonging to same document)
+    doc_ids_memmap_path =  processed_data_path+'/train.doc_ids.dat',  
+    processed_stats_json_path = processed_data_path+'/processed-stats.json',
+    faiss_index_filename = processed_data_path+'/knn.index',
+    force_reprocess = data_args.force_reprocess,
+    max_chunks = data_args.max_chunks,                   
+    max_seqs = data_args.max_seqs,            
+    knn_extra_neighbors = training_args.knn_extra_neighbors,   
+    chunks_to_embeddings_batch_size = training_args.chunks_to_embeddings_batch_size,   
+    max_index_memory_usage = data_args.max_index_memory_usage,
     current_memory_available = data_args.current_memory_available,
 )
 
@@ -57,20 +64,38 @@ def run():
     training_parser = argparse.ArgumentParser()
     data_parser = argparse.ArgumentParser()
 
+    # common args
     common_parser.add_argument(
         "--seed",
         default=42,
         type=int,
     )
     common_parser.add_argument(
-        "--output_dir",
-        default='./',
+        "--repo_dir",
+        default='/home/drdo/retro-cramming',
         type=str,
     )
 
+
+    # training args
     training_parser.add_argument(
         "--encoder_model",
         default='bert-base-uncased', 
+    )
+    training_parser.add_argument(
+        "--chunk_size", 
+        default=64,
+        type=int,
+    )
+    training_parser.add_argument(
+        "--knn", 
+        default=2,
+        type=int,
+    )
+    training_parser.add_argument(
+        "--knn_extra_neighbors", 
+        default=100,
+        type=int,
     )
     training_parser.add_argument(
         "--mixed_precision", # choose from no, fp16, bf16 or fp8
@@ -78,8 +103,13 @@ def run():
         type=str,
     )
     training_parser.add_argument(
+        "--chunks_to_embeddings_batch_size", 
+        default=16,
+        type=int,
+    )
+    training_parser.add_argument(
         "--per_device_train_batch_size", 
-        default='16',
+        default=16,
         type=int,
     )
     training_parser.add_argument(
@@ -98,6 +128,8 @@ def run():
         type=float,
     )
 
+
+    # data args
     data_parser.add_argument(
         "--dataset_path",
         default='/media/drdo/DATA/Datasets/wikipedia_20231101_en',
@@ -110,12 +142,12 @@ def run():
     )
     data_parser.add_argument(
         "--max_chunks",
-        default=10000000,
+        default=1_000_000,
         type=int,
     )
     data_parser.add_argument(
         "--max_seqs",
-        default=1000000,
+        default=100_000,
         type=int,
     )
     data_parser.add_argument(
@@ -127,6 +159,10 @@ def run():
         "--current_memory_available",
         default='1G',
         type=str,
+    )
+    data_parser.add_argument(
+        "--force_reprocess",
+        action="store_true",
     )
 
 
@@ -143,7 +179,7 @@ def run():
         mixed_precision=training_args.mixed_precision,
         gradient_accumulation_steps=training_args.gradient_accumulation_steps,
         log_with="tensorboard",
-        project_dir=common_args.output_dir
+        project_dir=common_args.repo_dir+'/src',
     )
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {

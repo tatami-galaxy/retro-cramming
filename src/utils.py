@@ -15,6 +15,10 @@ def reset_folder_(p):
 
 @contextmanager
 def memmap(*args, **kwargs):
+    # flush the memmap instance to write the changes to the file
+    # currently there is no API to close the underlying mmap
+    # it is tricky to ensure the resource is actually closed,
+    # since it may be shared between different memmap instances
     pointer = np.memmap(*args, **kwargs)
     yield pointer
     del pointer

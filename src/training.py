@@ -139,13 +139,14 @@ class TrainingWrapper(nn.Module):
         knn_extra_neighbors = 100,
         processed_stats_json_path = './processed-stats.json',
         faiss_index_filename = 'knn.index',
+        force_reprocess = False,
+        chunks_to_embeddings_batch_size = 16,
         **index_kwargs
     ):
         super().__init__()
         assert isinstance(retro, RETRO), 'retro must be instance of RETRO'
         self.retro = retro
 
-        force_reprocess = is_true_env_flag('REPROCESS')
 
         # store the processed training data statistics
         # number of chunks, number of sequences
@@ -175,16 +176,13 @@ class TrainingWrapper(nn.Module):
             print(f'found to be previously processed at {str(stats_path)}')
             self.stats = json.loads(stats_path.read_text())
 
-        quit()
 
         # get number of chunks and number of sequences
-
         num_chunks = self.stats['chunks']
         num_seqs = self.stats['seqs']
 
         # calculate knn memmap path and get the faiss index
-        # todo - make sure if faiss_index_filename is found, do not reprocess unless flag is given
-
+        # make sure if faiss_index_filename is found, do not reprocess unless flag is given
         knn_memmap_path, faiss_index = chunks_to_precalculated_knn_(
             num_chunks = num_chunks,
             chunk_size = chunk_size,
@@ -194,6 +192,7 @@ class TrainingWrapper(nn.Module):
             num_extra_neighbors = knn_extra_neighbors,
             index_file = faiss_index_filename,
             force_reprocess = force_reprocess,
+            chunks_to_embeddings_batch_size = chunks_to_embeddings_batch_size,
             **index_kwargs
         )
 

@@ -1,10 +1,8 @@
 from pathlib import Path
-from math import ceil
 from tqdm.auto import tqdm
 
 import torch
 import torch.nn.functional as F
-import logging
 import numpy as np
 from einops import rearrange
 
@@ -14,15 +12,17 @@ from autofaiss import build_index
 from utils import memmap, reset_folder_
 
 # constants
-
 SOS_ID = 101
 EOS_ID = 102
 BERT_MODEL_DIM = 768
 BERT_VOCAB_SIZE = 28996
-
 TMP_PATH = Path('./.tmp')
 INDEX_FOLDER_PATH = TMP_PATH / '.index'
 EMBEDDING_TMP_SUBFOLDER = 'embeddings'
+
+# singleton globals
+MODEL = None
+TOKENIZER = None
 
 # helper functions
 
@@ -37,15 +37,11 @@ def range_chunked(max_value, *, batch_size):
         yield slice(counter, curr)
         counter = curr
 
+
 # indexing helper functions
 
 def faiss_read_index(path):
     return faiss.read_index(str(path), faiss.IO_FLAG_MMAP | faiss.IO_FLAG_READ_ONLY)
-
-# singleton globals
-
-MODEL = None
-TOKENIZER = None
 
 
 def get_tokenizer(tokenizer_path):
@@ -158,9 +154,8 @@ def text_dataset_to_chunks_(
         , memmap(seqs_memmap_path, shape = seqs_shape, dtype = np.int32, mode = 'w+') as seqs_memmap\
         , memmap(doc_ids_memmap_path, shape = doc_ids_shape, dtype = np.int32, mode = 'w+') as doc_ids_memmap:
 
-        bar = tqdm(range(len(dataset)))  # max chunk or seq instead of dataset len maybe
+        bar = tqdm(range(max_chunks))  
 
-        # can we parallelize this?
         for example in dataset:
 
             chunks, seq = doc_text_to_chunks_and_seq_indices(
@@ -175,12 +170,18 @@ def text_dataset_to_chunks_(
             # how many seqs in doc
             doc_seq_len = seq.shape[0]
 
-            ## how to exit when max chunks reached? ##
+            # if max chunks reached stop
+            if total_chunks + doc_chunk_len > max_chunks:
+                break
+            # if max seqs reached stop
+            if total_seqs + doc_seq_len > max_seqs:
+                break
 
             # store chunks, seqs, doc_ids
-            # chunks (token ids)
+            # chunks (token ids), bound by max_chunks
             chunks_memmap[total_chunks: (total_chunks + doc_chunk_len)] = chunks.numpy() 
             # seq starting positions in corpus (all docs)
+            # bound by max_seqs
             seqs_memmap[total_seqs: (total_seqs + doc_seq_len)] = seq.numpy() + total_chunks
             # doc id for each chunk
             doc_ids_memmap[total_chunks: (total_chunks + doc_chunk_len)] = np.full((doc_chunk_len,), total_docs)
@@ -189,7 +190,7 @@ def text_dataset_to_chunks_(
             total_seqs += doc_seq_len
             total_docs += 1
 
-            bar.update(1)
+            bar.update(doc_chunk_len)
 
 
     return dict(
@@ -200,7 +201,6 @@ def text_dataset_to_chunks_(
 
 
 # embedding function
-
 @torch.no_grad()
 def bert_embed(
     token_ids,
@@ -237,16 +237,16 @@ def bert_embed(
     masked_mean =  numer / (denom + eps)
     return masked_mean
 
-# chunks to knn
 
+# chunks to knn
 def chunks_to_embeddings_(
     *,
     num_chunks,
     chunks_memmap_path,
     embeddings_memmap_path,
-    chunk_size = 64,
+    chunk_size = 64, 
     embed_dim = BERT_MODEL_DIM,
-    batch_size = 16,
+    batch_size = 16,    # chunks_to_embeddings_batch_size
     use_cls_repr = False,
     pad_id = 0.
 ):
@@ -257,6 +257,8 @@ def chunks_to_embeddings_(
         , memmap(embeddings_memmap_path, shape = embed_shape, dtype = np.float32, mode = 'w+') as embeddings:
 
         for dim_slice in range_chunked(num_chunks, batch_size = batch_size):
+
+            # b x chunk_size+1
             batch_chunk_npy = chunks[dim_slice]
 
             batch_chunk = torch.from_numpy(batch_chunk_npy)
@@ -264,7 +266,14 @@ def chunks_to_embeddings_(
             cls_tokens = torch.full((batch_chunk.shape[0], 1), SOS_ID)
             batch_chunk = torch.cat((cls_tokens, batch_chunk), dim = 1)
 
-            batch_chunk = batch_chunk[:, :-1] # omit last token, the first token of the next chunk, used for autoregressive training
+            print(batch_chunk.shape)
+
+            # omit last token, the first token of the next chunk, used for autoregressive training
+            # b x chunk_size
+            batch_chunk = batch_chunk[:, :-1]
+
+            print(batch_chunk.shape)
+            quit()
 
             batch_embed = bert_embed(
                 batch_chunk,
@@ -296,6 +305,7 @@ def memmap_file_to_chunks_(
             np.save(str(filename), f[dim_slice])
             print(f'saved {str(filename)}')
 
+
 def index_embeddings(
     embeddings_folder,
     *,
@@ -323,6 +333,7 @@ def index_embeddings(
 
     index = faiss_read_index(index_path)
     return index
+
 
 def chunks_to_index_and_embed(
     *,
@@ -382,25 +393,26 @@ def chunks_to_precalculated_knn_(
     index_file = 'knn.index',
     **index_kwargs
 ):
+    
+    # double check these paths
     chunk_path = Path(chunk_memmap_path)
     knn_path = chunk_path.parents[0] / f'{chunk_path.stem}.knn{chunk_path.suffix}'
     index_path = INDEX_FOLDER_PATH / index_file
 
     # early return knn path and faiss index
     # unless if force_reprocess is True
-
     if index_path.exists() and knn_path.exists() and not force_reprocess:
         print(f'preprocessed knn found at {str(knn_path)}, faiss index reconstituted from {str(index_path)}')
         index = faiss_read_index(index_path)
         return knn_path, index
 
     # fetch the faiss index and calculated embeddings for the chunks
-
     index, embeddings = chunks_to_index_and_embed(
         num_chunks = num_chunks,
         chunk_size = chunk_size,
         chunk_memmap_path = chunk_memmap_path,
         index_file = index_file,
+        chunks_to_embeddings_batch_size = chunks_to_embeddings_batch_size,
         **index_kwargs
     )
 

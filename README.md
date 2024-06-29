@@ -23,3 +23,4 @@ RETRO implementation under the cramming setup
     - chunks_to_precalculated_knn_ (retrieval)
         - chunks_to_index_and_embed (retrieval)
             - chunks_to_embeddings_ (retrieval)
+            - memmap_file_to_chunks_

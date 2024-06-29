@@ -44,7 +44,7 @@ def train(common_args, training_args, data_args, accelerator):
     #documents_path = './text_folder',           
     dataset = dataset,
     tokenizer_path = data_args.tokenizer_path,     
-    #glob = '**/*.txt',                            
+    #glob = '**/*.txt',                          
     chunks_memmap_path =  processed_data_path+'/train.chunks.dat',  # path to chunks
     seqs_memmap_path =  processed_data_path+'/train.seq.dat',   # path to sequence data
     # path to document ids per chunk (used for filtering neighbors belonging to same document)

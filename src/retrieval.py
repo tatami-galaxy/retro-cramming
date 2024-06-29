@@ -9,6 +9,8 @@ from einops import rearrange
 import faiss
 from autofaiss import build_index
 
+from transformers import AutoTokenizer, AutoModel
+
 from utils import memmap, reset_folder_
 
 # constants
@@ -44,7 +46,8 @@ def faiss_read_index(path):
 def get_tokenizer(tokenizer_path):
     global TOKENIZER
     if not exists(TOKENIZER):
-        TOKENIZER = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', tokenizer_path)
+        #TOKENIZER = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', tokenizer_path)
+        TOKENIZER = AutoTokenizer.from_pretrained(tokenizer_path)
     return TOKENIZER
 
 def get_special_tokens():
@@ -59,7 +62,8 @@ def get_special_tokens():
 def get_bert(frozen_model_path):
     global MODEL
     if not exists(MODEL):
-        MODEL = torch.hub.load('huggingface/pytorch-transformers', 'model', frozen_model_path)
+        #MODEL = torch.hub.load('huggingface/pytorch-transformers', 'model', frozen_model_path)
+        MODEL = AutoModel.from_pretrained(frozen_model_path)
         if torch.cuda.is_available():
             MODEL = MODEL.cuda()
 
@@ -226,6 +230,7 @@ def bert_embed(
         output_hidden_states = True
     )
 
+    # b x chunk_size x dim
     hidden_state = outputs.hidden_states[-1]
 
     if return_cls_repr:
@@ -244,6 +249,7 @@ def bert_embed(
 
 
 # chunks to knn
+# stored in mmaped file
 def chunks_to_embeddings_(
     *,
     frozen_model_path,
@@ -269,17 +275,17 @@ def chunks_to_embeddings_(
 
             batch_chunk = torch.from_numpy(batch_chunk_npy)
 
-            cls_tokens = torch.full((batch_chunk.shape[0], 1), SOS_ID)
-            batch_chunk = torch.cat((cls_tokens, batch_chunk), dim = 1)
+            # add sos token to each chunk in batch -> why?
+            #cls_tokens = torch.full((batch_chunk.shape[0], 1), SOS_ID)
+            #batch_chunk = torch.cat((cls_tokens, batch_chunk), dim = 1)
 
-            print(cls_tokens.shape)
-            print(batch_chunk)
-            quit()
-
-            # omit last token, the first token of the next chunk, used for autoregressive training
+            # omit last token, the first token of the next chunk
+            # used for autoregressive training
+            # not needed during embedding computation
             # b x chunk_size
             batch_chunk = batch_chunk[:, :-1]
 
+            # b x dim
             batch_embed = bert_embed(
                 frozen_model_path,
                 batch_chunk,
@@ -406,13 +412,12 @@ def chunks_to_precalculated_knn_(
     # double check these paths
     chunk_path = Path(chunk_memmap_path)
     knn_path = chunk_path.parents[0] / f'{chunk_path.stem}.knn{chunk_path.suffix}'
-    index_path = INDEX_FOLDER_PATH / index_file
 
     # early return knn path and faiss index
     # unless if force_reprocess is True
-    if index_path.exists() and knn_path.exists() and not force_reprocess:
-        print(f'preprocessed knn found at {str(knn_path)}, faiss index reconstituted from {str(index_path)}')
-        index = faiss_read_index(index_path)
+    if index_file is not None and knn_path.exists() and not force_reprocess:
+        print(f'preprocessed knn found at {str(knn_path)}, faiss index reconstituted from {str(index_file)}')
+        index = faiss_read_index(index_file)
         return knn_path, index
 
     # fetch the faiss index and calculated embeddings for the chunks

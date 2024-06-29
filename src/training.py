@@ -125,6 +125,7 @@ class TrainingWrapper(nn.Module):
         self,
         *,
         retro,
+        frozen_model_path,
         chunk_size,
         #documents_path,
         dataset,
@@ -184,6 +185,7 @@ class TrainingWrapper(nn.Module):
         # calculate knn memmap path and get the faiss index
         # make sure if faiss_index_filename is found, do not reprocess unless flag is given
         knn_memmap_path, faiss_index = chunks_to_precalculated_knn_(
+            frozen_model_path = frozen_model_path,
             num_chunks = num_chunks,
             chunk_size = chunk_size,
             chunk_memmap_path = chunks_memmap_path,

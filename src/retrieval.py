@@ -12,20 +12,19 @@ from autofaiss import build_index
 from utils import memmap, reset_folder_
 
 # constants
-SOS_ID = 101
-EOS_ID = 102
-BERT_MODEL_DIM = 768
-BERT_VOCAB_SIZE = 28996
-TMP_PATH = Path('./.tmp')
-INDEX_FOLDER_PATH = TMP_PATH / '.index'
 EMBEDDING_TMP_SUBFOLDER = 'embeddings'
 
 # singleton globals
 MODEL = None
 TOKENIZER = None
+SOS_ID = None
+EOS_ID = None
+
+## remove ##
+BERT_MODEL_DIM = 768
+BERT_VOCAB_SIZE = 28996
 
 # helper functions
-
 def exists(val):
     return val is not None
 
@@ -39,10 +38,8 @@ def range_chunked(max_value, *, batch_size):
 
 
 # indexing helper functions
-
 def faiss_read_index(path):
     return faiss.read_index(str(path), faiss.IO_FLAG_MMAP | faiss.IO_FLAG_READ_ONLY)
-
 
 def get_tokenizer(tokenizer_path):
     global TOKENIZER
@@ -50,25 +47,32 @@ def get_tokenizer(tokenizer_path):
         TOKENIZER = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', tokenizer_path)
     return TOKENIZER
 
+def get_special_tokens():
+    global TOKENIZER
+    global SOS_ID
+    global EOS_ID
+    if not exists(TOKENIZER):
+        raise ValueError(f"first define tokenizer")
+    SOS_ID = TOKENIZER.cls_token
+    EOS_ID = TOKENIZER.sep_token
 
-def get_bert():
+def get_bert(frozen_model_path):
     global MODEL
     if not exists(MODEL):
-        MODEL = torch.hub.load('huggingface/pytorch-transformers', 'model', 'bert-base-cased')
+        MODEL = torch.hub.load('huggingface/pytorch-transformers', 'model', frozen_model_path)
         if torch.cuda.is_available():
             MODEL = MODEL.cuda()
 
     return MODEL
 
 # tokenize
-
 def tokenize(texts, tokenizer_path, add_special_tokens = True):
     if not isinstance(texts, (list, tuple)):
         texts = [texts]
 
     tokenizer = get_tokenizer(tokenizer_path)
 
-    encoding = tokenizer.batch_encode_plus(
+    encoding = tokenizer(
         texts,
         add_special_tokens = add_special_tokens,
         padding = True,
@@ -92,7 +96,7 @@ def doc_text_to_chunks_and_seq_indices(
 
     # 1 x total text length
     ids = tokenize(doc_text, tokenizer_path)
-
+    # has sos and eos tokens (cls and sep for bert)
     ids = rearrange(ids, '1 ... -> ...')
 
     text_len = ids.shape[-1]
@@ -203,12 +207,13 @@ def text_dataset_to_chunks_(
 # embedding function
 @torch.no_grad()
 def bert_embed(
+    frozen_model_path,
     token_ids,
     return_cls_repr = False,
     eps = 1e-8,
     pad_id = 0.
 ):
-    model = get_bert()
+    model = get_bert(frozen_model_path)
     mask = token_ids != pad_id
 
     if torch.cuda.is_available():
@@ -241,6 +246,7 @@ def bert_embed(
 # chunks to knn
 def chunks_to_embeddings_(
     *,
+    frozen_model_path,
     num_chunks,
     chunks_memmap_path,
     embeddings_memmap_path,
@@ -266,16 +272,16 @@ def chunks_to_embeddings_(
             cls_tokens = torch.full((batch_chunk.shape[0], 1), SOS_ID)
             batch_chunk = torch.cat((cls_tokens, batch_chunk), dim = 1)
 
-            print(batch_chunk.shape)
+            print(cls_tokens.shape)
+            print(batch_chunk)
+            quit()
 
             # omit last token, the first token of the next chunk, used for autoregressive training
             # b x chunk_size
             batch_chunk = batch_chunk[:, :-1]
 
-            print(batch_chunk.shape)
-            quit()
-
             batch_embed = bert_embed(
+                frozen_model_path,
                 batch_chunk,
                 return_cls_repr = use_cls_repr
             )
@@ -337,6 +343,7 @@ def index_embeddings(
 
 def chunks_to_index_and_embed(
     *,
+    frozen_model_path,
     num_chunks,
     chunk_size,
     chunk_memmap_path,
@@ -351,6 +358,7 @@ def chunks_to_index_and_embed(
     embed_shape = (num_chunks, embed_dim)
 
     chunks_to_embeddings_(
+        frozen_model_path = frozen_model_path,
         num_chunks = num_chunks,
         chunk_size = chunk_size,
         chunks_memmap_path = chunk_memmap_path,
@@ -379,6 +387,7 @@ def chunks_to_index_and_embed(
 
 def chunks_to_precalculated_knn_(
     *,
+    frozen_model_path,
     num_nearest_neighbors,
     num_chunks,
     chunk_size,
@@ -408,6 +417,7 @@ def chunks_to_precalculated_knn_(
 
     # fetch the faiss index and calculated embeddings for the chunks
     index, embeddings = chunks_to_index_and_embed(
+        frozen_model_path = frozen_model_path,
         num_chunks = num_chunks,
         chunk_size = chunk_size,
         chunk_memmap_path = chunk_memmap_path,

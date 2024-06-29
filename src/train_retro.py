@@ -10,6 +10,9 @@ import torch
 from retro_pytorch import RETRO
 from training import TrainingWrapper
 
+#import lovely_tensors as lt
+#lt.monkey_patch()
+
 #ds = load_dataset("wikimedia/wikipedia", "20231101.en")
 #ds.save_to_disk('/media/drdo/DATA/Datasets/wikipedia_20231101_en')
 
@@ -34,7 +37,8 @@ def train(common_args, training_args, data_args, accelerator):
     processed_data_path = common_args.repo_dir+'/data/processed'
 
     wrapper = TrainingWrapper(
-    retro = retro,                             
+    retro = retro,       
+    frozen_model_path = training_args.frozen_model_path,                      
     knn = training_args.knn,    # 2                       
     chunk_size = training_args.chunk_size,  # 64         
     #documents_path = './text_folder',           
@@ -79,8 +83,8 @@ def run():
 
     # training args
     training_parser.add_argument(
-        "--encoder_model",
-        default='bert-base-uncased', 
+        "--frozen_model_path",
+        default='bert-base-cased', 
     )
     training_parser.add_argument(
         "--chunk_size", 
@@ -137,7 +141,7 @@ def run():
     )
     data_parser.add_argument(
         "--tokenizer_path",
-        default='bert-base-uncased',
+        default='bert-base-cased',
         type=str,
     )
     data_parser.add_argument(

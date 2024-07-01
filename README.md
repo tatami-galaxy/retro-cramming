@@ -23,4 +23,11 @@ RETRO implementation under the cramming setup
     - chunks_to_precalculated_knn_ (retrieval)
         - chunks_to_index_and_embed (retrieval)
             - chunks_to_embeddings_ (retrieval)
-            - memmap_file_to_chunks_
+            - memmap_file_to_chunks_ (retrieval)
+                - partition embeddings to small files
+            - index_embeddings (retrieval)
+            - pre-compute knns
+- RETRODataset for retrieving training seqs
+    - Extend pytorch dataset
+    - get dataloader over it
+    - __getitem__ method of RETRODataset (data)

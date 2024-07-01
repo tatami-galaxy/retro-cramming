@@ -66,14 +66,12 @@ def top_p(logits, thres = 0.9):
     sorted_logits[sorted_indices_to_remove] = float('-inf')
     return sorted_logits.scatter(1, sorted_indices, sorted_logits)
 
-# function that returns knn chunks from seq chunks
-#
+
+# function that returns knn chunks from seq chunks :
 # 1. adds sos and eos to seq chunks
 # 2. embeds the seq chunks with special tokens with frozen BERT
 # 3. fetches the knn indices with faiss
 # 4. gets the knn chunks as well as the continuation from a reference to the chunks data (memmap)
-#
-
 def knn_chunks_from_seq_chunks(
     seq_chunks,
     *,
@@ -86,7 +84,6 @@ def knn_chunks_from_seq_chunks(
     b, device = seq_chunks.shape[0], seq_chunks.device
 
     # prepare last chunk with sos and eos tokens for BERT embed
-
     ones = torch.ones((b, 1), dtype = torch.bool, device = device)
     sos = ones * SOS_ID
     eos = ones * EOS_ID
@@ -94,15 +91,12 @@ def knn_chunks_from_seq_chunks(
     seq_chunks = torch.cat((sos, seq_chunks, eos), dim = 1)
 
     # embed with frozen BERT
-
     embeds = bert_embed(seq_chunks.cpu()) # fetch embeds on CPU for now
 
     # retrieval of knn with faiss
-
     _, knn_indices = faiss_index.search(embeds.cpu().numpy(), k = knn)
 
     # numpy to torch
-
     with memmap(chunks_memmap_path, dtype = np.int32, shape = (num_chunks + 1, chunk_size + 1)) as chunk_memmap:
         knn_chunks = knn_to_retrieved_chunks(
             knn_indices,
@@ -140,8 +134,12 @@ class TrainingWrapper(nn.Module):
         knn_extra_neighbors = 100,
         processed_stats_json_path = './processed-stats.json',
         faiss_index_filename = 'knn.index',
+        index_infos_file = 'index_infos.json',
         force_reprocess = False,
         chunks_to_embeddings_batch_size = 16,
+        embeddings_folder = './embeddings',
+        max_index_memory_usage = '100m',
+        current_memory_available = '1G',
         **index_kwargs
     ):
         super().__init__()
@@ -193,13 +191,16 @@ class TrainingWrapper(nn.Module):
             num_nearest_neighbors = knn,
             num_extra_neighbors = knn_extra_neighbors,
             index_file = faiss_index_filename,
+            index_infos_file = index_infos_file,
             force_reprocess = force_reprocess,
             chunks_to_embeddings_batch_size = chunks_to_embeddings_batch_size,
+            embeddings_folder = embeddings_folder,
+            max_index_memory_usage = max_index_memory_usage,
+            current_memory_available = current_memory_available,
             **index_kwargs
         )
 
         # retro dataset
-
         self.ds = RETRODataset(
             num_sequences = num_seqs,
             num_chunks = num_chunks,
@@ -212,7 +213,6 @@ class TrainingWrapper(nn.Module):
         )
 
         # params needed for generation
-
         self.chunk_size = chunk_size
         self.max_seq_len = self.retro.seq_len
 
@@ -224,6 +224,7 @@ class TrainingWrapper(nn.Module):
             chunks_memmap_path = chunks_memmap_path,
             faiss_index = faiss_index
         )
+
 
     @torch.no_grad()
     @eval_decorator

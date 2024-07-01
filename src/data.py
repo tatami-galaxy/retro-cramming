@@ -48,7 +48,11 @@ def knn_to_retrieved_chunks(
     return retrieved
 
 # dataset
-
+# All subclasses should overwrite __getitem__(), supporting fetching a data sample for a given key.
+# Subclasses could also optionally overwrite __len__(), which is expected to return the size of the dataset 
+# by many Sampler implementations and the default options of DataLoader.
+# Subclasses could also optionally implement __getitems__(), for speedup batched samples loading. 
+# This method accepts list of indices of samples of batch and returns list of samples.
 class RETRODataset(Dataset):
     def __init__(
         self,
@@ -82,19 +86,25 @@ class RETRODataset(Dataset):
         self.get_knns = partial(memmap, chunk_nn_memmap_path, dtype = np.int32, shape = knn_shape)
         self.get_seqs = partial(memmap, seq_memmap_path, dtype = np.int32, shape = (num_sequences,))
 
+
     def __len__(self):
         return self.num_sequences
 
+
     def __getitem__(self, ind):
         with self.get_chunks() as chunks_memmap, self.get_knns() as knns_memmap, self.get_seqs() as seqs_memmap:
+
             begin_chunk_index = seqs_memmap[ind]
             chunk_range = slice(begin_chunk_index, (begin_chunk_index + self.seq_num_chunks))
-
             chunks = chunks_memmap[chunk_range]
 
-            # excise the last token, except for last token of last chunk
+            print(chunks.shape)
 
+            # excise the last token, except for last token of last chunk
             seq_tokens = np.concatenate((chunks[:, :-1].flatten(), chunks[-1, -1:]))
+
+            print(seq_tokens.shape)
+            quit()
 
             # mask out (with padding tokens) any token following an <eos> | disallow having more than 1 document in a sequence, as it would break RETRO's CCA
 

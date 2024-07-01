@@ -162,7 +162,7 @@ def text_dataset_to_chunks_(
         , memmap(seqs_memmap_path, shape = seqs_shape, dtype = np.int32, mode = 'w+') as seqs_memmap\
         , memmap(doc_ids_memmap_path, shape = doc_ids_shape, dtype = np.int32, mode = 'w+') as doc_ids_memmap:
 
-        bar = tqdm(range(max_chunks))  
+        bar = tqdm(range(max_chunks), desc="Text dataset to token chunks")  
 
         for example in dataset:
 
@@ -265,6 +265,8 @@ def chunks_to_embeddings_(
     chunks_shape = (num_chunks, chunk_size + 1)
     embed_shape = (num_chunks, embed_dim)
 
+    bar = tqdm(range(num_chunks), desc="Chunks to embeddings")
+
     with memmap(chunks_memmap_path, shape = chunks_shape, dtype = np.int32) as chunks\
         , memmap(embeddings_memmap_path, shape = embed_shape, dtype = np.float32, mode = 'w+') as embeddings:
 
@@ -293,7 +295,8 @@ def chunks_to_embeddings_(
             )
 
             embeddings[dim_slice] = batch_embed.detach().cpu().numpy()
-            print(f'embedded {dim_slice.stop} / {num_chunks}')
+            #print(f'embedded {dim_slice.stop} / {num_chunks}')
+            bar.update(dim_slice.stop - dim_slice.start)
 
 
 def memmap_file_to_chunks_(
@@ -306,35 +309,33 @@ def memmap_file_to_chunks_(
 ):
     rows, _ = shape
 
+    bar = tqdm(range(shape[0]), desc="Splitting embedding file into smaller chunks")
+
     with memmap(memmap_path, shape = shape, dtype = dtype, mode = 'r') as f:
-        root_path = TMP_PATH / folder
-        reset_folder_(root_path)
+        reset_folder_(folder)
 
         for ind, dim_slice in enumerate(range_chunked(rows, batch_size = max_rows_per_file)):
-            filename = root_path / f'{ind:05d}.npy'
+            filename = folder +'/'+ f'{ind:05d}.npy'
             data_slice = f[dim_slice]
 
             np.save(str(filename), f[dim_slice])
-            print(f'saved {str(filename)}')
+            #print(f'saved {str(filename)}')
+            bar.update(dim_slice.stop - dim_slice.start)
 
 
 def index_embeddings(
     embeddings_folder,
     *,
-    index_file = 'knn.index',
-    index_infos_file = 'index_infos.json',
-    max_index_memory_usage = '100m',
-    current_memory_available = '1G'
+    index_file,
+    index_infos_file,
+    max_index_memory_usage,
+    current_memory_available,
 ):
-    embeddings_path = TMP_PATH / embeddings_folder
-    index_path = INDEX_FOLDER_PATH / index_file
-
-    reset_folder_(INDEX_FOLDER_PATH)
 
     build_index(
-        embeddings = str(embeddings_path),
-        index_path = str(index_path),
-        index_infos_path = str(INDEX_FOLDER_PATH / index_infos_file),
+        embeddings = embeddings_folder,
+        index_path = index_file,
+        index_infos_path = index_infos_file,
         metric_type = "l2",
         max_index_memory_usage = max_index_memory_usage,
         current_memory_available = current_memory_available,
@@ -343,7 +344,7 @@ def index_embeddings(
         use_gpu = torch.cuda.is_available(),
     )
 
-    index = faiss_read_index(index_path)
+    index = faiss_read_index(index_file)
     return index
 
 
@@ -353,11 +354,15 @@ def chunks_to_index_and_embed(
     num_chunks,
     chunk_size,
     chunk_memmap_path,
+    index_file,
+    index_infos_file,
+    embeddings_folder,
+    max_index_memory_usage,
+    current_memory_available,
     use_cls_repr = False,
     max_rows_per_file = 500,
     chunks_to_embeddings_batch_size = 16,
     embed_dim = BERT_MODEL_DIM,
-    index_file = 'knn.index',
     **index_kwargs
 ):
     embedding_path = f'{chunk_memmap_path}.embedded'
@@ -373,23 +378,27 @@ def chunks_to_index_and_embed(
         batch_size = chunks_to_embeddings_batch_size,
         embed_dim = embed_dim
     )
-
+    # split embedding file into smaller chunks (files)
     memmap_file_to_chunks_(
         embedding_path,
         shape = embed_shape,
         dtype = np.float32,
-        folder = EMBEDDING_TMP_SUBFOLDER,
+        folder = embeddings_folder,
         max_rows_per_file = max_rows_per_file
     )
-
+    # build faiss index
     index = index_embeddings(
-        embeddings_folder = EMBEDDING_TMP_SUBFOLDER,
+        embeddings_folder = embeddings_folder,
         index_file = index_file,
+        index_infos_file = index_infos_file,
+        max_index_memory_usage = max_index_memory_usage,
+        current_memory_available = current_memory_available,
         **index_kwargs
     )
 
     embeddings = np.memmap(embedding_path, shape = embed_shape, dtype = np.float32, mode = 'r')
     return index, embeddings
+
 
 def chunks_to_precalculated_knn_(
     *,
@@ -399,17 +408,20 @@ def chunks_to_precalculated_knn_(
     chunk_size,
     chunk_memmap_path,
     doc_ids_memmap_path,
-    use_cls_repr = False,
+    embeddings_folder,
+    index_file,
+    index_infos_file,
+    max_index_memory_usage,
+    current_memory_available,
     max_rows_per_file = 500,
     chunks_to_embeddings_batch_size = 16,
     embed_dim = BERT_MODEL_DIM,
     num_extra_neighbors = 10,
+    use_cls_repr = False,
     force_reprocess = False,
-    index_file = 'knn.index',
     **index_kwargs
 ):
     
-    # double check these paths
     chunk_path = Path(chunk_memmap_path)
     knn_path = chunk_path.parents[0] / f'{chunk_path.stem}.knn{chunk_path.suffix}'
 
@@ -427,11 +439,18 @@ def chunks_to_precalculated_knn_(
         chunk_size = chunk_size,
         chunk_memmap_path = chunk_memmap_path,
         index_file = index_file,
+        index_infos_file = index_infos_file,
         chunks_to_embeddings_batch_size = chunks_to_embeddings_batch_size,
+        embeddings_folder = embeddings_folder,
+        max_index_memory_usage = max_index_memory_usage,
+        current_memory_available = current_memory_available,
         **index_kwargs
     )
 
+    # pre-compute knns for training set
     total_neighbors_to_fetch = num_extra_neighbors + num_nearest_neighbors + 1
+
+    bar = tqdm(range(num_chunks), desc="Calculating knns")
 
     with memmap(knn_path, shape = (num_chunks, num_nearest_neighbors), dtype = np.int32, mode = 'w+') as knns\
         , memmap(doc_ids_memmap_path, shape = (num_chunks,), dtype = np.int32, mode = 'r') as doc_ids:
@@ -463,7 +482,7 @@ def chunks_to_precalculated_knn_(
 
             knns[dim_slice] = indices[:, :num_nearest_neighbors]
 
-            print(f'knns calculated for {dim_slice.stop} / {num_chunks}')
+            bar.update(dim_slice.stop - dim_slice.start)
 
-    print(f'knn saved to {knn_path}')
+    print(f'knns saved to {knn_path}')
     return knn_path, index

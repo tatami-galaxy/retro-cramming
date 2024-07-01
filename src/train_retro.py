@@ -1,10 +1,13 @@
-import argparse
+from dataclasses import dataclass, field
+from typing import List
 
 from datasets import load_from_disk
 from datasets import load_from_disk
 
 from accelerate import Accelerator
 from accelerate.utils import set_seed
+
+from transformers import HfArgumentParser
 
 import torch
 from retro_pytorch import RETRO
@@ -16,20 +19,86 @@ from training import TrainingWrapper
 #ds = load_dataset("wikimedia/wikipedia", "20231101.en")
 #ds.save_to_disk('/media/drdo/DATA/Datasets/wikipedia_20231101_en')
 
+
+@dataclass
+class CommonArguments:
+
+    seed: int = field(default=2)
+    repo_dir: str = field(default='/home/drdo/retro-cramming')
+
+
+@dataclass
+class TrainingArguments:
+
+    # frozen encoder
+    frozen_model_path: str = field(
+        default="bert-base-cased",
+        metadata={"help": "frozen encoder model"},
+    )
+
+    # retro
+    max_seq_len_retro: int = field(default=2048)
+    enc_dim: int = field(default=896)          
+    enc_depth: int = field(default=3)                         
+    dec_dim: int = field(default=768)                           
+    dec_depth: int = field(default=12)
+    # decoder cross attention layers (with causal chunk cross attention)   
+    dec_cross_attn_layers: List[int] = field(default_factory=lambda: [1, 3, 6, 9])
+    heads: int = field(default=8) 
+    dim_head: int = field(default=64) 
+    dec_attn_dropout: float = field(default=0.25)
+    dec_ff_dropout: float = field(default=0.25)  
+    
+    # chunk and knn
+    chunk_size: str = field(default=64)
+    knn: int = field(default=2)
+    knn_extra_neighbors: int = field(default=100)
+    chunks_to_embeddings_batch_size: int = field(default=16)
+
+    # other training args
+    mixed_precision: str = field(
+        default="fp16",
+        metadata={"help": "choose from : ['no', 'fp16', 'bf16', 'fp8']"}
+    )
+    per_device_train_batch_size: int = field(default=2)
+    train_steps: int = field(default=100000)
+    gradient_accumulation_steps: int = field(default=1)
+    lr: float = field(default=3e-4)
+    wd: float = field(default=1e-1)
+
+    def __post_init__(self):
+        pass
+
+
+@dataclass
+class DataArguments:
+
+    dataset_path: str = field(
+        default='/media/drdo/DATA/Datasets/wikipedia_20231101_en',
+    )
+    tokenizer_path: str = field(default='bert-base-cased')
+    max_chunks: int = field(default=1_000_000)
+    max_seqs: int = field(default=100_000)
+    max_index_memory_usage: str = field(default='100m')
+    current_memory_available: str = field(default='1G')
+    force_reprocess: bool = field(default=False)
+
+
+
 def train(common_args, training_args, data_args, accelerator):
 
     retro = RETRO(
-        max_seq_len = 2048,                      # max sequence length
-        enc_dim = 896,                           # encoder model dimension
-        enc_depth = 3,                           # encoder depth
-        dec_dim = 768,                           # decoder model dimensions
-        dec_depth = 12,                          # decoder depth
-        dec_cross_attn_layers = (1, 3, 6, 9),    # decoder cross attention layers (with causal chunk cross attention)
-        heads = 8,                               # attention heads
-        dim_head = 64,                           # dimension per head
-        dec_attn_dropout = 0.25,                 # decoder attention dropout
-        dec_ff_dropout = 0.25                    # decoder feedforward dropout
-    )#.cuda()
+        max_seq_len = training_args.max_seq_len_retro,  
+        enc_dim = training_args.enc_dim,
+        enc_depth = training_args.enc_depth,
+        dec_dim = training_args.dec_dim,
+        dec_depth = training_args.dec_depth,
+        dec_cross_attn_layers = training_args.dec_cross_attn_layers,
+        heads = training_args.heads,
+        dim_head = training_args.dim_head,
+        dec_attn_dropout = training_args.dec_attn_dropout,
+        dec_ff_dropout = training_args.dec_ff_dropout,
+    ).cuda()
 
     dataset_dict = load_from_disk(data_args.dataset_path)
     dataset = dataset_dict['train']
@@ -37,143 +106,66 @@ def train(common_args, training_args, data_args, accelerator):
     processed_data_path = common_args.repo_dir+'/data/processed'
 
     wrapper = TrainingWrapper(
-    retro = retro,       
-    frozen_model_path = training_args.frozen_model_path,                      
-    knn = training_args.knn,    # 2                       
-    chunk_size = training_args.chunk_size,  # 64         
-    #documents_path = './text_folder',           
-    dataset = dataset,
-    tokenizer_path = data_args.tokenizer_path,     
-    #glob = '**/*.txt',                          
-    chunks_memmap_path =  processed_data_path+'/train.chunks.dat',  # path to chunks
-    seqs_memmap_path =  processed_data_path+'/train.seq.dat',   # path to sequence data
-    # path to document ids per chunk (used for filtering neighbors belonging to same document)
-    doc_ids_memmap_path =  processed_data_path+'/train.doc_ids.dat',  
-    processed_stats_json_path = processed_data_path+'/processed-stats.json',
-    faiss_index_filename = processed_data_path+'/knn.index',
-    force_reprocess = data_args.force_reprocess,
-    max_chunks = data_args.max_chunks,                   
-    max_seqs = data_args.max_seqs,            
-    knn_extra_neighbors = training_args.knn_extra_neighbors,   
-    chunks_to_embeddings_batch_size = training_args.chunks_to_embeddings_batch_size,   
-    max_index_memory_usage = data_args.max_index_memory_usage,
-    current_memory_available = data_args.current_memory_available,
-)
+        retro = retro,       
+        frozen_model_path = training_args.frozen_model_path,                      
+        knn = training_args.knn,    # 2           
+        knn_extra_neighbors = training_args.knn_extra_neighbors,            
+        chunk_size = training_args.chunk_size,  # 64         
 
+        #documents_path = './text_folder',           
+        dataset = dataset,
+        tokenizer_path = data_args.tokenizer_path,     
+        #glob = '**/*.txt',                          
+        chunks_memmap_path =  processed_data_path+'/train.chunks.dat',  # path to chunks
+        seqs_memmap_path =  processed_data_path+'/train.seq.dat',   # path to sequence data
+        # path to document ids per chunk (used for filtering neighbors belonging to same document)
+        doc_ids_memmap_path =  processed_data_path+'/train.doc_ids.dat',  
+        processed_stats_json_path = processed_data_path+'/processed-stats.json',
+        faiss_index_filename = processed_data_path+'/knn.index',
+        index_infos_file = processed_data_path+'index_infos.json',
+        force_reprocess = data_args.force_reprocess,
+        max_chunks = data_args.max_chunks,                   
+        max_seqs = data_args.max_seqs,             
+        chunks_to_embeddings_batch_size = training_args.chunks_to_embeddings_batch_size,   
+        embeddings_folder = processed_data_path+'/embeddings',
+
+        max_index_memory_usage = data_args.max_index_memory_usage,
+        current_memory_available = data_args.current_memory_available,
+    )
+
+
+    # get the dataloader and optimizer (AdamW with all the correct settings)
+    # https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader
+    train_dl = iter(wrapper.get_dataloader(
+        batch_size = training_args.per_device_train_batch_size,
+        shuffle = True
+    ))
+    optim = wrapper.get_optimizer(lr = training_args.lr, wd = training_args.wd)
+
+    # now do your training
+    # ex. one gradient step
+
+    # seq       - (2, 2049)         - 1 extra token since split by seq[:, :-1], seq[:, 1:]
+    # retrieved - (2, 32, 2, 128)   - 128 since chunk + continuation, each 64 tokens
+    seq, retrieved = map(lambda t: t.cuda(), next(train_dl))
+
+    loss = retro(
+        seq,
+        retrieved,
+        return_loss = True
+    )
+
+    # one gradient step
+    loss.backward()
+    optim.step()
+    optim.zero_grad()
 
 
 def run():
 
-    common_parser = argparse.ArgumentParser()
-    training_parser = argparse.ArgumentParser()
-    data_parser = argparse.ArgumentParser()
-
-    # common args
-    common_parser.add_argument(
-        "--seed",
-        default=42,
-        type=int,
-    )
-    common_parser.add_argument(
-        "--repo_dir",
-        default='/home/drdo/retro-cramming',
-        type=str,
-    )
-
-
-    # training args
-    training_parser.add_argument(
-        "--frozen_model_path",
-        default='bert-base-cased', 
-    )
-    training_parser.add_argument(
-        "--chunk_size", 
-        default=64,
-        type=int,
-    )
-    training_parser.add_argument(
-        "--knn", 
-        default=2,
-        type=int,
-    )
-    training_parser.add_argument(
-        "--knn_extra_neighbors", 
-        default=100,
-        type=int,
-    )
-    training_parser.add_argument(
-        "--mixed_precision", # choose from no, fp16, bf16 or fp8
-        default='fp16',
-        type=str,
-    )
-    training_parser.add_argument(
-        "--chunks_to_embeddings_batch_size", 
-        default=16,
-        type=int,
-    )
-    training_parser.add_argument(
-        "--per_device_train_batch_size", 
-        default=16,
-        type=int,
-    )
-    training_parser.add_argument(
-        "--train_steps",
-        default='100000',
-        type=int,
-    )
-    training_parser.add_argument(
-        "--gradient_accumulation_steps",
-        default=1,
-        type=int,
-    )
-    training_parser.add_argument(
-        "--lr",
-        default=1e-5,
-        type=float,
-    )
-
-
-    # data args
-    data_parser.add_argument(
-        "--dataset_path",
-        default='/media/drdo/DATA/Datasets/wikipedia_20231101_en',
-        type=str,
-    )
-    data_parser.add_argument(
-        "--tokenizer_path",
-        default='bert-base-cased',
-        type=str,
-    )
-    data_parser.add_argument(
-        "--max_chunks",
-        default=1_000_000,
-        type=int,
-    )
-    data_parser.add_argument(
-        "--max_seqs",
-        default=100_000,
-        type=int,
-    )
-    data_parser.add_argument(
-        "--max_index_memory_usage",
-        default='100m',
-        type=str,
-    )
-    data_parser.add_argument(
-        "--current_memory_available",
-        default='1G',
-        type=str,
-    )
-    data_parser.add_argument(
-        "--force_reprocess",
-        action="store_true",
-    )
-
-
-    # parse args
-    common_args = common_parser.parse_args()
-    training_args = training_parser.parse_args()
-    data_args = data_parser.parse_args()
+    # parse cl arguments
+    parser = HfArgumentParser((CommonArguments, TrainingArguments, DataArguments))
+    common_args, training_args, data_args = parser.parse_args_into_dataclasses()
 
     # set seed
     set_seed(common_args.seed)

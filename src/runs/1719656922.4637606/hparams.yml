@@ -1,4 +1,0 @@
-lr: 1.0e-05
-seed: 42
-train_batch_size: 16
-train_steps: 100000

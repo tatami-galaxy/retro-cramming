@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import typing
 from typing import List
 
 from datasets import load_from_disk
@@ -45,9 +46,14 @@ class TrainingArguments:
     # decoder cross attention layers (with causal chunk cross attention)   
     dec_cross_attn_layers: List[int] = field(default_factory=lambda: [1, 3, 6, 9])
     heads: int = field(default=8) 
-    dim_head: int = field(default=64) 
-    dec_attn_dropout: float = field(default=0.25)
-    dec_ff_dropout: float = field(default=0.25)  
+    dim_head: int = field(default=64, metadata={"help": "must be greater than 32"})   # MIN_DIM_HEAD = 32
+    dec_attn_dropout: float = field(default=0.25)   # 0.
+    dec_ff_dropout: float = field(default=0.25) # 0.
+    enc_attn_dropout: float = field(default=0.25)   # 0.
+    enc_ff_dropout: float = field(default=0.25) # 0.   
+    norm_klass: typing.Any = field(default=None, metadata={"help": "RMSNorm by default. Change in retro_pytorch.py"})  
+    gated_rmsnorm: bool = field(default=False)
+    use_deepnet: bool = field(default=False)
     
     # chunk and knn
     chunk_size: str = field(default=64)
@@ -99,8 +105,15 @@ def train(common_args, training_args, data_args, accelerator):
         dec_cross_attn_layers = training_args.dec_cross_attn_layers,
         heads = training_args.heads,
         dim_head = training_args.dim_head,
+        enc_attn_dropout = training_args.enc_attn_dropout,
+        enc_ff_dropout = training_args.enc_ff_dropout,
         dec_attn_dropout = training_args.dec_attn_dropout,
         dec_ff_dropout = training_args.dec_ff_dropout,
+        chunk_size = training_args.chunk_size,
+        pad_id = data_args.pad_id,
+        norm_klass = training_args.norm_klass,
+        gated_rmsnorm = training_args.gated_rmsnorm,
+        use_deepnet = training_args.use_deepnet,
     ).cuda()
 
     dataset_dict = load_from_disk(data_args.dataset_path)
@@ -159,14 +172,13 @@ def train(common_args, training_args, data_args, accelerator):
     # now do your training
     # ex. one gradient step
 
-    # seq : b x max_seq_len_retro + 1)  -> 1 extra token since split by seq[:, :-1], seq[:, 1:]
+    # seq : b x max_seq_len_retro + 1)  -> 1 extra token since split by seq[:, :-1], seq[:, 1:] for autoregression
     # retrieved : b x seq_num_chunks (32) x knn (2) x (2*chunk_size)    -> 128 since chunk + continuation, each 64 tokens
     seq, retrieved = map(lambda t: t.cuda(), next(train_dl))
 
     loss = retro(
         seq,
         retrieved,
-        return_loss = True
     )
 
     # one gradient step

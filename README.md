@@ -48,3 +48,6 @@ RETRO implementation under the cramming setup
             - mask out any nearest neighbor chunks that was -1 (not found at index time) to padding id
             
 - RETRO
+    - how do rotary embeddings work?
+    - forward()
+        - decode()

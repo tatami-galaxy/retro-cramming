@@ -9,7 +9,6 @@ from transformers import AutoConfig
 from einops import rearrange, repeat
 
 # constants
-
 MIN_DIM_HEAD = 32
 
 # helper functions
@@ -41,7 +40,6 @@ def deepnorm_init(transformer, beta, module_name_match_list = ['.ff.', '.to_v', 
             nn.init.constant_(module.bias.data, 0)
 
 # normalization
-
 class RMSNorm(nn.Module):
     def __init__(
         self,
@@ -66,7 +64,6 @@ class RMSNorm(nn.Module):
         return out * (x * self.weight).sigmoid()
 
 # pre and post norm residual wrapper modules
-
 class PreNorm(nn.Module):
     def __init__(self, dim, fn, norm_klass = RMSNorm):
         super().__init__()
@@ -88,8 +85,8 @@ class PostNorm(nn.Module):
         out = self.fn(x, *args, **kwargs) + residual
         return self.norm(out)
 
-# positional embedding
 
+# positional embedding
 class RotaryEmbedding(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -113,8 +110,8 @@ def apply_rotary_pos_emb(t, freqs):
     t = (t * freqs.cos()) + (rotate_half(t) * freqs.sin())
     return torch.cat((t, t_pass), dim = -1)
 
-# feedforward
 
+# feedforward
 class FeedForward(nn.Module):
     def __init__(self, dim, mult = 4, dropout = 0.):
         super().__init__()
@@ -130,8 +127,8 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.ff(x)
 
-# attention
 
+# attention
 class Attention(nn.Module):
     def __init__(
         self,
@@ -234,6 +231,7 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 
+# cca
 class ChunkedCrossAttention(nn.Module):
     def __init__(
         self,
@@ -298,8 +296,8 @@ class ChunkedCrossAttention(nn.Module):
         out = F.pad(out, (0, 0, causal_padding, -causal_padding + seq_remain_len), value = 0.)
         return out
 
-# encoder and decoder classes
 
+# encoder and decoder classes
 class Encoder(nn.Module):
     def __init__(
         self,
@@ -360,6 +358,7 @@ class Encoder(nn.Module):
         x = self.norm_out(x)
         return self.project_out(x)
 
+
 class Decoder(nn.Module):
     def __init__(
         self,
@@ -383,7 +382,6 @@ class Decoder(nn.Module):
 
         # partial rotary embeddings, which is better than full rotary
         # Wang and Komatsuzaki et al https://github.com/kingoflolz/mesh-transformer-jax/
-
         rotary_emb_dim = min(dim_head, MIN_DIM_HEAD)
         self.rotary_pos_emb = RotaryEmbedding(rotary_emb_dim)
 
@@ -402,39 +400,34 @@ class Decoder(nn.Module):
 
         self.norm_out = norm_klass(dim) if final_norm and not post_norm else nn.Identity()
 
+
     def forward(self, x, *, encoder = None, encoder_retrieved_mask = None, context_mask = None, retrieved = None):
         device, seq_len = x.device, x.shape[-2]
         self_attn_pos_emb = self.rotary_pos_emb(seq_len, device = device)
 
         # calculate seq index
-
         num_seq_chunks = seq_len // self.chunk_size
         seq_index = num_seq_chunks * self.chunk_size
 
         # rotary positions on the retrieved chunks
-
         if exists(retrieved):
             num_chunks, num_neighbors, chunk_size = retrieved.shape[-4:-1]
-
             cross_attn_q_pos_emb = self.rotary_pos_emb(self.chunk_size, device = device, offset = self.chunk_size - 1)  # need to add extra chunk size, since it will be shifted
             cross_attn_k_pos_emb = self.rotary_pos_emb(chunk_size, device = device)
-
             cross_attn_pos_emb = (cross_attn_q_pos_emb, cross_attn_k_pos_emb)
 
         # keep track of whether retrieved tokens are encoded yet
-
         retrieved_encoded = False
 
         # go through the decoder layers
-
         for attn, cross_attn, ff in self.layers:
             x = attn(x, pos_emb = self_attn_pos_emb)
 
             if exists(cross_attn) and exists(retrieved):
+
                 if not retrieved_encoded:
                     retrieved = rearrange(retrieved, 'b k r n d -> (b k r) n d')
                     seq_as_context = repeat(x[:, :seq_index], 'b (k n) d -> (b k r) n d', n = self.chunk_size, r = num_neighbors)
-
                     retrieved = encoder(retrieved, mask = encoder_retrieved_mask, chunked_seq = seq_as_context)
                     retrieved = rearrange(retrieved, '(b k r) n d -> b k r n d', k = num_chunks, r = num_neighbors)
                     retrieved_encoded = True
@@ -488,28 +481,23 @@ class RETRO(nn.Module):
 
         self.token_emb = nn.Embedding(num_tokens, enc_dim)
         self.pos_emb = nn.Embedding(max_seq_len, enc_dim)
-
         self.chunk_size = chunk_size
-
         self.to_decoder_model_dim = nn.Linear(enc_dim, dec_dim) if enc_dim != dec_dim else nn.Identity()
-
-        # for deepnet, residual scales
-        # follow equation in Figure 2. in https://arxiv.org/abs/2203.00555
 
         norm_klass = default(norm_klass, RMSNorm)
 
+        # for deepnet, residual scales
+        # follow equation in Figure 2. in https://arxiv.org/abs/2203.00555
         if use_deepnet:
             enc_scale_residual = default(enc_scale_residual, 0.81 * ((enc_depth ** 4) * dec_depth) ** .0625)
             dec_scale_residual = default(dec_scale_residual, (3 * dec_depth) ** 0.25)
             norm_klass = nn.LayerNorm
 
         # allow for gated rmsnorm
-
         if gated_rmsnorm:
             norm_klass = partial(RMSNorm, gated = True)
 
         # define encoder and decoders
-
         self.encoder = Encoder(
             dim = enc_dim,
             context_dim = dec_dim,
@@ -523,7 +511,6 @@ class RETRO(nn.Module):
             scale_residual = enc_scale_residual,
             output_dim = dec_dim
         )
-
         self.decoder = Decoder(
             dim = dec_dim,
             depth = dec_depth,
@@ -540,7 +527,6 @@ class RETRO(nn.Module):
         self.to_logits = nn.Linear(dec_dim, num_tokens)
 
         # deepnet has special init of weight matrices
-
         if use_deepnet:
             deepnorm_init(self.encoder, 0.87 * ((enc_depth ** 4) * dec_depth) ** -0.0625)
             deepnorm_init(self.decoder, (12 * dec_depth) ** -0.25)
@@ -551,12 +537,10 @@ class RETRO(nn.Module):
         seq
     ):
         # embed sequence
-
         embed = self.token_emb(seq)
         embed = embed[:, :self.seq_len]
 
         # get absolute positional embedding
-
         pos_emb = self.pos_emb(torch.arange(embed.shape[1], device = embed.device))
         pos_emb = rearrange(pos_emb, 'n d -> 1 n d')
         embed = embed + pos_emb
@@ -565,7 +549,6 @@ class RETRO(nn.Module):
         embed = self.decoder(embed)
 
         # project to logits
-
         return self.to_logits(embed)
 
 
@@ -573,7 +556,7 @@ class RETRO(nn.Module):
         self,
         seq,
         retrieved = None,
-        return_loss = False
+        return_loss = True,
     ):
         """
         b - batch
@@ -589,45 +572,35 @@ class RETRO(nn.Module):
         assert not (return_loss and not self.training), 'must be training if returning loss'
 
         # assume padding token id (usually 0.) is to be masked out
-
         mask = retrieved != self.pad_id
 
         # handle some user inputs
-
         if retrieved.ndim == 3:
             retrieved = rearrange(retrieved, 'b k n -> b k 1 n') # 1 neighbor retrieved
 
         # if training, derive labels
-
         if return_loss:
             seq, labels = seq[:, :-1], seq[:, 1:]
 
         # variables
-
         n, num_chunks, num_neighbors, chunk_size, retrieved_shape, device = seq.shape[-1], *retrieved.shape[-3:], retrieved.shape, seq.device
-
         assert chunk_size >= self.chunk_size, 'chunk size of retrieval input must be greater or equal to the designated chunk_size on RETRO initialization'
-
         num_seq_chunks = n // self.chunk_size
         assert num_chunks == num_seq_chunks, f'sequence requires {num_seq_chunks} retrieved chunks, but only {num_chunks} passed in'
 
         # sequence index at which k-nearest neighbors have not been fetched yet after
-
         seq_index = num_seq_chunks * self.chunk_size
 
-        # embed both sequence and retrieved chunks
-
+        # embed both sequence (input x) and retrieved chunks
         embed = self.token_emb(seq)
         retrieved = self.token_emb(retrieved)
 
         # get absolute positional embedding
-
         pos_emb = self.pos_emb(torch.arange(n, device = device))
         pos_emb = rearrange(pos_emb, 'n d -> 1 n d')
         embed = embed + pos_emb
 
         # handle masks for encoder and decoder, if needed
-
         encoder_retrieved_mask = decoder_retrieved_mask = None
 
         if exists(mask):
@@ -636,13 +609,11 @@ class RETRO(nn.Module):
             decoder_retrieved_mask = mask
 
         # project both sequence embedding and retrieved embedding to decoder dimension if necessary
-
         embed = self.to_decoder_model_dim(embed)
 
         # decode
-
         embed = self.decoder(
-            embed,
+            embed,  # input
             encoder = self.encoder,
             context_mask = decoder_retrieved_mask,
             encoder_retrieved_mask = encoder_retrieved_mask,
@@ -650,13 +621,12 @@ class RETRO(nn.Module):
         )
 
         # project to logits
-
         logits = self.to_logits(embed)
 
         if not return_loss:
             return logits
 
         # cross entropy loss
-
         loss = F.cross_entropy(rearrange(logits, 'b n c -> b c n'), labels, ignore_index = self.pad_id)
+
         return loss

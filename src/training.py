@@ -120,7 +120,7 @@ class TrainingWrapper(nn.Module):
         *,
         retro,
         frozen_model_path,
-        chunk_size,
+        chunk_size = 64,
         #documents_path,
         dataset,
         tokenizer_path,
@@ -131,7 +131,7 @@ class TrainingWrapper(nn.Module):
         doc_ids_memmap_path = './train.doc_ids.dat',
         max_chunks = 1_000_000,
         max_seqs = 100_000,
-        knn_extra_neighbors = 100,
+        knn_extra_neighbors = 10,
         processed_stats_json_path = './processed-stats.json',
         faiss_index_filename = 'knn.index',
         index_infos_file = 'index_infos.json',
@@ -140,12 +140,14 @@ class TrainingWrapper(nn.Module):
         embeddings_folder = './embeddings',
         max_index_memory_usage = '100m',
         current_memory_available = '1G',
+        max_rows_per_file = 500,
+        pad_id = 0,
+        add_continuations = True,
         **index_kwargs
     ):
         super().__init__()
         assert isinstance(retro, RETRO), 'retro must be instance of RETRO'
         self.retro = retro
-
 
         # store the processed training data statistics
         # number of chunks, number of sequences
@@ -167,7 +169,8 @@ class TrainingWrapper(nn.Module):
                 chunk_size = chunk_size,
                 seq_len = retro.seq_len,
                 max_chunks = max_chunks,
-                max_seqs = max_seqs
+                max_seqs = max_seqs,
+                pad_id = pad_id,
             )
             with open(processed_stats_json_path, 'w') as f:
                 json.dump(self.stats, f)
@@ -197,6 +200,7 @@ class TrainingWrapper(nn.Module):
             embeddings_folder = embeddings_folder,
             max_index_memory_usage = max_index_memory_usage,
             current_memory_available = current_memory_available,
+            max_rows_per_file = max_rows_per_file,
             **index_kwargs
         )
 
@@ -209,7 +213,9 @@ class TrainingWrapper(nn.Module):
             seq_len = retro.seq_len,
             chunk_memmap_path = chunks_memmap_path,
             chunk_nn_memmap_path = knn_memmap_path,
-            seq_memmap_path = seqs_memmap_path
+            seq_memmap_path = seqs_memmap_path,
+            pad_id = pad_id,
+            add_continuations = add_continuations,
         )
 
         # params needed for generation

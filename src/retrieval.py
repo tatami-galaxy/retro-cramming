@@ -9,22 +9,15 @@ from einops import rearrange
 import faiss
 from autofaiss import build_index
 
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoConfig, AutoTokenizer, AutoModel
 
 from utils import memmap, reset_folder_
-
-# constants
-EMBEDDING_TMP_SUBFOLDER = 'embeddings'
 
 # singleton globals
 MODEL = None
 TOKENIZER = None
 SOS_ID = None
 EOS_ID = None
-
-## remove ##
-BERT_MODEL_DIM = 768
-BERT_VOCAB_SIZE = 28996
 
 # helper functions
 def exists(val):
@@ -45,19 +38,15 @@ def faiss_read_index(path):
 
 def get_tokenizer(tokenizer_path):
     global TOKENIZER
-    if not exists(TOKENIZER):
-        #TOKENIZER = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', tokenizer_path)
-        TOKENIZER = AutoTokenizer.from_pretrained(tokenizer_path)
-    return TOKENIZER
-
-def get_special_tokens():
-    global TOKENIZER
     global SOS_ID
     global EOS_ID
     if not exists(TOKENIZER):
-        raise ValueError(f"first define tokenizer")
-    SOS_ID = TOKENIZER.cls_token
-    EOS_ID = TOKENIZER.sep_token
+        #TOKENIZER = torch.hub.load('huggingface/pytorch-transformers', 'tokenizer', tokenizer_path)
+        TOKENIZER = AutoTokenizer.from_pretrained(tokenizer_path)
+        SOS_ID = TOKENIZER.cls_token
+        EOS_ID = TOKENIZER.sep_token
+    return TOKENIZER
+
 
 def get_bert(frozen_model_path):
     global MODEL
@@ -92,9 +81,9 @@ def doc_text_to_chunks_and_seq_indices(
     *,
     doc_text,
     tokenizer_path,
-    chunk_size = 64,
-    seq_len = 2048,
-    pad_id = 0
+    seq_len,
+    chunk_size,
+    pad_id,
 ):
     assert (seq_len % chunk_size) == 0, 'sequence length must be divisible by chunk size'
 
@@ -107,7 +96,7 @@ def doc_text_to_chunks_and_seq_indices(
 
     # pad to multiple of chunk size with an extra token
     padding = chunk_size - ((text_len - 1) % chunk_size)
-    ids = F.pad(ids, (0, padding))
+    ids = F.pad(ids, (pad_id, padding))
 
     # split out very last token (of last chunk)
     # this is a pad token if n not a multiple of chunk_size
@@ -142,11 +131,12 @@ def text_dataset_to_chunks_(
     chunks_memmap_path,
     seqs_memmap_path,
     doc_ids_memmap_path,
-    chunk_size = 64,
-    seq_len = 2048,
+    max_chunks,
+    max_seqs,
+    chunk_size,
+    pad_id,
+    seq_len,
     #glob = '**/*.txt',
-    max_chunks = 1_000_000,
-    max_seqs = 100_000
 ):
     #paths = sorted([*Path(folder).glob(glob)])
 
@@ -170,7 +160,8 @@ def text_dataset_to_chunks_(
                 doc_text = example['text'],
                 tokenizer_path = tokenizer_path,
                 chunk_size = chunk_size,
-                seq_len = seq_len
+                seq_len = seq_len,
+                pad_id = pad_id,
             )
 
             # how many chunks in doc
@@ -256,12 +247,13 @@ def chunks_to_embeddings_(
     num_chunks,
     chunks_memmap_path,
     embeddings_memmap_path,
-    chunk_size = 64, 
-    embed_dim = BERT_MODEL_DIM,
-    batch_size = 16,    # chunks_to_embeddings_batch_size
+    embed_dim,
+    chunk_size,
+    batch_size,
     use_cls_repr = False,
     pad_id = 0.
 ):
+    
     chunks_shape = (num_chunks, chunk_size + 1)
     embed_shape = (num_chunks, embed_dim)
 
@@ -359,12 +351,15 @@ def chunks_to_index_and_embed(
     embeddings_folder,
     max_index_memory_usage,
     current_memory_available,
+    max_rows_per_file,
+    chunks_to_embeddings_batch_size,
     use_cls_repr = False,
-    max_rows_per_file = 500,
-    chunks_to_embeddings_batch_size = 16,
-    embed_dim = BERT_MODEL_DIM,
     **index_kwargs
 ):
+    # get embed_dim
+    config = AutoConfig.from_pretrained(frozen_model_path)
+    embed_dim = config.hidden_size
+
     embedding_path = f'{chunk_memmap_path}.embedded'
     embed_shape = (num_chunks, embed_dim)
 
@@ -403,7 +398,7 @@ def chunks_to_index_and_embed(
 def chunks_to_precalculated_knn_(
     *,
     frozen_model_path,
-    num_nearest_neighbors,
+    num_nearest_neighbors,  # 2
     num_chunks,
     chunk_size,
     chunk_memmap_path,
@@ -413,12 +408,11 @@ def chunks_to_precalculated_knn_(
     index_infos_file,
     max_index_memory_usage,
     current_memory_available,
-    max_rows_per_file = 500,
-    chunks_to_embeddings_batch_size = 16,
-    embed_dim = BERT_MODEL_DIM,
-    num_extra_neighbors = 10,
+    max_rows_per_file,
+    chunks_to_embeddings_batch_size,
+    num_extra_neighbors,    # 100
+    force_reprocess,
     use_cls_repr = False,
-    force_reprocess = False,
     **index_kwargs
 ):
     
@@ -444,11 +438,12 @@ def chunks_to_precalculated_knn_(
         embeddings_folder = embeddings_folder,
         max_index_memory_usage = max_index_memory_usage,
         current_memory_available = current_memory_available,
+        max_rows_per_file = max_rows_per_file,
         **index_kwargs
     )
 
     # pre-compute knns for training set
-    total_neighbors_to_fetch = num_extra_neighbors + num_nearest_neighbors + 1
+    total_neighbors_to_fetch = num_extra_neighbors + num_nearest_neighbors + 1  # why +1?
 
     bar = tqdm(range(num_chunks), desc="Calculating knns")
 
@@ -456,30 +451,33 @@ def chunks_to_precalculated_knn_(
         , memmap(doc_ids_memmap_path, shape = (num_chunks,), dtype = np.int32, mode = 'r') as doc_ids:
 
         for dim_slice in range_chunked(num_chunks, batch_size = max_rows_per_file):
+
+            # max_rows_per_file x embed_dim
             query_vector = embeddings[dim_slice]
 
             distances, indices = index.search(query_vector, k = total_neighbors_to_fetch)
 
             # remove self from distances and indices
-
             distances = distances[:, 1:]
             indices = indices[:, 1:]
 
             # mask out any neighbors that belong to the same document to -1
-
             query_doc_ids = doc_ids[dim_slice]
             neighbor_doc_ids = doc_ids[indices]
             neighbor_from_same_doc = query_doc_ids[..., None] == neighbor_doc_ids
 
+            # np.where example : 
+            # array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+            # np.where(a < 5, a, 10*a)
+            # array([ 0,  1,  2,  3,  4, 50, 60, 70, 80, 90])
             indices = np.where(neighbor_from_same_doc, -1, indices)
-            distances = np.where(neighbor_from_same_doc, 1e3, distances)
+            distances = np.where(neighbor_from_same_doc, 1e3, distances)    # large distance for same doc (1000)
 
             # re-sort indices by updated distances
-
+            # since some of the neighbors were potentially removed for being in the same doc
             indices = np.take_along_axis(indices, np.argsort(distances, axis = 1), axis = 1)
 
             # store nearest neighbors to knn memmap
-
             knns[dim_slice] = indices[:, :num_nearest_neighbors]
 
             bar.update(dim_slice.stop - dim_slice.start)

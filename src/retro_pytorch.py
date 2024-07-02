@@ -4,7 +4,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 
-from retrieval import BERT_VOCAB_SIZE
+from transformers import AutoConfig
+
 from einops import rearrange, repeat
 
 # constants
@@ -449,13 +450,13 @@ class Decoder(nn.Module):
 
         return self.norm_out(x)
 
-# main class
 
+# main class
 class RETRO(nn.Module):
     def __init__(
         self,
         *,
-        num_tokens = BERT_VOCAB_SIZE,
+        frozen_model_path,
         max_seq_len = 2048,
         enc_dim = 896,
         enc_depth = 2,
@@ -481,6 +482,9 @@ class RETRO(nn.Module):
         assert dim_head >= MIN_DIM_HEAD, f'dimension per head must be greater than {MIN_DIM_HEAD}'
         self.seq_len = max_seq_len
         self.pad_id = pad_id
+
+        config = AutoConfig.from_pretrained(frozen_model_path)
+        num_tokens = config.vocab_size
 
         self.token_emb = nn.Embedding(num_tokens, enc_dim)
         self.pos_emb = nn.Embedding(max_seq_len, enc_dim)

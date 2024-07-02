@@ -33,7 +33,7 @@ class TrainingArguments:
     # frozen encoder
     frozen_model_path: str = field(
         default="bert-base-cased",
-        metadata={"help": "frozen encoder model"},
+        metadata={"help": "frozen encoder model. If changing model from bert make sure to update special tokens"},
     )
 
     # retro
@@ -52,9 +52,9 @@ class TrainingArguments:
     # chunk and knn
     chunk_size: str = field(default=64)
     knn: int = field(default=2)
-    knn_extra_neighbors: int = field(default=100)
+    knn_extra_neighbors: int = field(default=100, metadata={"help": "some neighbors will get removed (-1) for being in the same doc"})
     chunks_to_embeddings_batch_size: int = field(default=16)
-
+    
     # other training args
     mixed_precision: str = field(
         default="fp16",
@@ -82,12 +82,15 @@ class DataArguments:
     max_index_memory_usage: str = field(default='100m')
     current_memory_available: str = field(default='1G')
     force_reprocess: bool = field(default=False)
-
+    max_rows_per_file: int = field(default=500, metadata={"help": "max rows per file for embedding files"})
+    pad_id: int = field(default=0)
+    add_continuations: bool = field(default=True, metadata={"help": "whether to retrieve continuations of chunks"})
 
 
 def train(common_args, training_args, data_args, accelerator):
 
     retro = RETRO(
+        frozen_model_path = training_args.frozen_model_path,
         max_seq_len = training_args.max_seq_len_retro,  
         enc_dim = training_args.enc_dim,
         enc_depth = training_args.enc_depth,
@@ -106,31 +109,42 @@ def train(common_args, training_args, data_args, accelerator):
     processed_data_path = common_args.repo_dir+'/data/processed'
 
     wrapper = TrainingWrapper(
+
+        # retro and encoder #
         retro = retro,       
         frozen_model_path = training_args.frozen_model_path,                      
-        knn = training_args.knn,    # 2           
-        knn_extra_neighbors = training_args.knn_extra_neighbors,            
-        chunk_size = training_args.chunk_size,  # 64         
-
-        #documents_path = './text_folder',           
+                
+        # data #          
         dataset = dataset,
-        tokenizer_path = data_args.tokenizer_path,     
-        #glob = '**/*.txt',                          
+        tokenizer_path = data_args.tokenizer_path,         
+        chunk_size = training_args.chunk_size,  # 64                   
         chunks_memmap_path =  processed_data_path+'/train.chunks.dat',  # path to chunks
         seqs_memmap_path =  processed_data_path+'/train.seq.dat',   # path to sequence data
         # path to document ids per chunk (used for filtering neighbors belonging to same document)
         doc_ids_memmap_path =  processed_data_path+'/train.doc_ids.dat',  
         processed_stats_json_path = processed_data_path+'/processed-stats.json',
-        faiss_index_filename = processed_data_path+'/knn.index',
-        index_infos_file = processed_data_path+'index_infos.json',
-        force_reprocess = data_args.force_reprocess,
         max_chunks = data_args.max_chunks,                   
-        max_seqs = data_args.max_seqs,             
+        max_seqs = data_args.max_seqs,    
+        pad_id = data_args.pad_id,
+        add_continuations = data_args.add_continuations,        
+        
+
+        # faiss and embeddings #
         chunks_to_embeddings_batch_size = training_args.chunks_to_embeddings_batch_size,   
         embeddings_folder = processed_data_path+'/embeddings',
-
+        max_rows_per_file = data_args.max_rows_per_file,
+        faiss_index_filename = processed_data_path+'/knn.index',
+        index_infos_file = processed_data_path+'index_infos.json',
         max_index_memory_usage = data_args.max_index_memory_usage,
         current_memory_available = data_args.current_memory_available,
+
+        # knn #
+        knn = training_args.knn,    # 2           
+        knn_extra_neighbors = training_args.knn_extra_neighbors, 
+
+        # others #
+        force_reprocess = data_args.force_reprocess,
+
     )
 
 
@@ -145,8 +159,8 @@ def train(common_args, training_args, data_args, accelerator):
     # now do your training
     # ex. one gradient step
 
-    # seq       - (2, 2049)         - 1 extra token since split by seq[:, :-1], seq[:, 1:]
-    # retrieved - (2, 32, 2, 128)   - 128 since chunk + continuation, each 64 tokens
+    # seq : b x max_seq_len_retro + 1)  -> 1 extra token since split by seq[:, :-1], seq[:, 1:]
+    # retrieved : b x seq_num_chunks (32) x knn (2) x (2*chunk_size)    -> 128 since chunk + continuation, each 64 tokens
     seq, retrieved = map(lambda t: t.cuda(), next(train_dl))
 
     loss = retro(

@@ -19,7 +19,7 @@ RETRO implementation under the cramming setup
         - doc_text_to_chunks_and_seq_indices
             - tokenize
             - chunk
-            - 1 token overlap between adjacent chunks (chunk_size + 1)
+            - 1 token overlap between adjacent chunks (chunk_size + 1) -> why?
         - store chunks, seqs, doc_ids for each chunk
 
 - Faiss index
@@ -38,7 +38,7 @@ RETRO implementation under the cramming setup
     - Extend pytorch dataset
     - get dataloader over it
     - __getitem__ method of RETRODataset (data)
-        - remove the last token, except for last token of last chunk
+        - remove the last token, except for last token of last chunk -> why did we add it?
         - disallow having more than 1 document in a sequence, as it would break RETRO's CCA
         - knn_to_retrieved_chunks (data)
             - derive mask for no neighbors found (-1)

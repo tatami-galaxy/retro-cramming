@@ -19,7 +19,8 @@ RETRO implementation under the cramming setup
         - doc_text_to_chunks_and_seq_indices
             - tokenize
             - chunk
-            - 1 token overlap between adjacent chunks (chunk_size + 1) -> why?
+            - 1 token overlap between adjacent chunks (chunk_size + 1)
+                - the last token of chunk Cu is the first to be able to access the retrieved content Eu
         - store chunks, seqs, doc_ids for each chunk
 
 - Faiss index

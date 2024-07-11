@@ -118,8 +118,4 @@ class RETRODataset(Dataset):
         seq_tokens_torch = torch.from_numpy(seq_tokens).long()
         retrieved_torch = torch.from_numpy(retrieved).long()
 
-        print(retrieved_torch)
-        print(retrieved_torch.shape)
-        quit()
-
         return seq_tokens_torch, retrieved_torch

@@ -39,7 +39,8 @@ RETRO implementation under the cramming setup
     - Extend pytorch dataset
     - get dataloader over it
     - __getitem__ method of RETRODataset (data)
-        - remove the last token, except for last token of last chunk -> why did we add it?
+        - remove the last token, except for last token of last chunk
+            - need to remove duplicate last/first token for clm, token was needed for retrieval
         - disallow having more than 1 document in a sequence, as it would break RETRO's CCA
         - knn_to_retrieved_chunks (data)
             - derive mask for no neighbors found (-1)
@@ -52,3 +53,4 @@ RETRO implementation under the cramming setup
     - how do rotary embeddings work?
     - forward()
         - decode()
+    - generate() in TrainingWrapper (training)
